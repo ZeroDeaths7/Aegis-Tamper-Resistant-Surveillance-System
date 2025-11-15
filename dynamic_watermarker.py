@@ -4,12 +4,16 @@ import time
 import hmac
 import hashlib
 from datetime import datetime
+import csv
+import os
 
 # --- 1. CONFIGURATION ---
 INPUT_VIDEO_FILE = 0 # Set to 0 for the default webcam. Try 1, 2, etc., if 0 fails.
 OUTPUT_VIDEO_FILE = 'watermarked_output.mp4'
+WATERMARK_LOG_FILE = 'watermark_log.csv' # Log file for validator
+LOG_DURATION_SECONDS = 30 # Limit log duration to 30 seconds for testing purposes
 
-# This key must be identical in the validator (test_validator.py).
+# **CRITICAL SECRET:** This key must be identical in the validator (test_validator.py).
 SERVER_SECRET_KEY = b"YourUnbreakableWatermarkSecretKey12345" 
 
 # Opacity/Visibility settings
@@ -20,6 +24,7 @@ VISIBILITY_FLIP_INTERVAL_SECONDS = 10
 def generate_hmac_token():
     """
     Generates a unique 4-digit token based on HMAC-SHA256, ensuring non-sequential jumps.
+    Returns the token string and the timestamp used to generate it.
     """
     current_time_seconds = int(time.time())
     
@@ -39,7 +44,7 @@ def generate_hmac_token():
     final_token = token_int % 10000
     
     # Format as a 4-digit string with leading zeros
-    return f"{final_token:04d}"
+    return f"{final_token:04d}", current_time_seconds
 
 def get_current_opacity():
     """
@@ -54,17 +59,33 @@ def get_current_opacity():
         return 0.2 # Low Opacity (Faint text)
 
 
-def generate_watermark_text():
+def generate_watermark_text(token):
     """
     Creates the complete dynamic watermark signature.
     """
-    token = generate_hmac_token()
     dt_now = datetime.now().strftime("%Y%m%d-%H%M%S")
     
     signature = f"TST-H:{token} | T:{dt_now}"
     return signature
 
-# --- 3. WATERMARK EMBEDDING FUNCTION ---
+# --- 3. WATERMARK LOGGING AND EMBEDDING ---
+
+def initialize_log_file():
+    """Initializes the CSV log file with headers."""
+    # Delete file if it exists to ensure a clean start
+    if os.path.exists(WATERMARK_LOG_FILE):
+        os.remove(WATERMARK_LOG_FILE)
+    
+    with open(WATERMARK_LOG_FILE, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['timestamp_seconds', 'hmac_token'])
+
+def log_watermark(timestamp, token):
+    """Appends the current token and timestamp to the CSV log file."""
+    with open(WATERMARK_LOG_FILE, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([timestamp, token])
+
 def embed_watermark(frame, watermark_text, rect_alpha_multiplier):
     H, W = frame.shape[:2]
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -129,7 +150,7 @@ def process_dynamic_watermarking(input_source):
     if fps <= 0.0:
         fps = 30.0
     
-    # --- CODEC INITIALIZATION ---
+    # --- Codec and VideoWriter Initialization ---
     CODECS = ['XVID', 'MJPG', 'mp4v', 'DIVX']
     out = None
     for codec_name in CODECS:
@@ -146,18 +167,38 @@ def process_dynamic_watermarking(input_source):
         print("Fatal Error: Could not find a working codec to write the video file.")
         cap.release()
         return
+    # --- End Codec Initialization ---
 
+    initialize_log_file() # Initialize the log file
+    start_time = time.time()
+    last_logged_time = 0
+    
     print(f"Starting HMAC-TST watermarking. Estimated FPS: {fps:.2f}. ")
+    print(f"Logging tokens for the first {LOG_DURATION_SECONDS} seconds to {WATERMARK_LOG_FILE}.")
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-
-        # --- DYNAMIC WATERMARK LOGIC (Runs every frame) ---
-        opacity_multiplier = get_current_opacity()
-        watermark_text = generate_watermark_text()
         
+        current_time = time.time()
+        current_time_s = int(current_time)
+        
+        # --- LOGIC EXECUTION ---
+        opacity_multiplier = get_current_opacity()
+        token, token_timestamp = generate_hmac_token() # Get the token and its source timestamp
+        watermark_text = generate_watermark_text(token)
+        
+        # --- LOGGING (Once per second) ---
+        if current_time_s > last_logged_time and current_time < start_time + LOG_DURATION_SECONDS:
+            log_watermark(token_timestamp, token)
+            last_logged_time = current_time_s
+
+        # Stop processing after logging duration is met
+        if current_time > start_time + LOG_DURATION_SECONDS + 5: # Give a few seconds buffer
+             print("\nLOGGING COMPLETE. Ending stream now.")
+             break
+
         # --- EMBEDDING ---
         frame = embed_watermark(frame, watermark_text, opacity_multiplier)
 
@@ -175,5 +216,4 @@ def process_dynamic_watermarking(input_source):
     print(f"\nFinished processing. Output saved to {OUTPUT_VIDEO_FILE}")
 
 # --- EXECUTE ---
-# This call is required for the webcam to open and the loop to start.
 process_dynamic_watermarking(INPUT_VIDEO_FILE)
