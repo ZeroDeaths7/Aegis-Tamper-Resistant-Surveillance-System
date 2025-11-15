@@ -7,7 +7,7 @@ from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO, emit
 import cv2
 import numpy as np
-import Tamper.tamper_detector as tamper_detector
+import tamper_detector
 import os
 import threading
 import time
@@ -17,8 +17,8 @@ import time
 # ============================================================================
 
 app = Flask(__name__, 
-            template_folder='./Frontend',
-            static_folder='./Frontend',
+            template_folder='./frontend',
+            static_folder='./frontend',
             static_url_path='')
 
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -31,10 +31,9 @@ CAMERA_INDEX = 0
 # Global variables
 cap = None
 prev_gray = None
-current_frame_raw = None  # Raw frame without text
-current_frame_processed = None  # Frame with detection text
+current_frame = None  # Raw frame without text
+processed_frame = None  # Frame with detection text
 frame_lock = None
-detection_data_cache = None  # Cache for detection data
 
 # ============================================================================
 # CAMERA AND DETECTION FUNCTIONS
@@ -64,7 +63,7 @@ def camera_thread():
     Continuously capture frames and run detections.
     This runs in a separate thread to avoid blocking.
     """
-    global prev_gray, current_frame_raw, current_frame_processed, frame_lock, detection_data_cache
+    global prev_gray, current_frame, processed_frame, frame_lock, detection_data_cache
     
     ret, first_frame = cap.read()
     if not ret:
@@ -88,6 +87,7 @@ def camera_thread():
         # --- RUN DETECTIONS ---
         is_blurred, blur_variance = tamper_detector.check_blur(gray, threshold=BLUR_THRESHOLD)
         is_shaken, shake_magnitude = tamper_detector.check_shake(gray, prev_gray, threshold=SHAKE_THRESHOLD)
+        is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
         
         # Prepare detection data for frontend
         detection_data = {
@@ -100,8 +100,9 @@ def camera_thread():
                 'magnitude': float(shake_magnitude)
             },
             'glare': {
-                'detected': False,
-                'value': 0
+                'detected': bool(is_glare),
+                'percentage': float(glare_percentage),
+                'histogram': glare_histogram
             },
             'liveness': {
                 'frozen': False,
@@ -114,9 +115,10 @@ def camera_thread():
         
         # Emit detection update to all connected clients
         try:
-            socketio.server.emit('detection_update', detection_data, broadcast=True)
+            with app.app_context():
+                socketio.emit('detection_update', detection_data, namespace='/', skip_sid=None)
             if frame_count % 30 == 0:
-                print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}")
+                print(f"Emitted detection data: Blur={blur_variance:.2f}, Shake={shake_magnitude:.2f}, Glare={glare_percentage:.2f}%")
         except Exception as e:
             print(f"Error emitting detection data: {e}")
         
@@ -131,6 +133,10 @@ def camera_thread():
         shake_status = "SHAKE" if is_shaken else "STABLE"
         shake_color = (0, 255, 255) if not is_shaken else (0, 0, 255)  # Bright Yellow or Red
         
+        # Glare status with color
+        glare_status = "GLARE" if is_glare else "OK"
+        glare_color = (0, 0, 255) if is_glare else (0, 255, 0)  # Red or Green
+        
         # Add text to the processed frame
         cv2.putText(frame_with_text, f"Blur: {blur_status}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, blur_color, 2)
@@ -138,19 +144,25 @@ def camera_thread():
         cv2.putText(frame_with_text, f"Shake: {shake_status}",
                     (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, shake_color, 2)
         
+        cv2.putText(frame_with_text, f"Glare: {glare_status}",
+                    (500, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, glare_color, 2)
+        
         cv2.putText(frame_with_text, f"Blur Variance: {blur_variance:.2f} (Th: {BLUR_THRESHOLD:.0f})",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         cv2.putText(frame_with_text, f"Shake Magnitude: {shake_magnitude:.2f} (Th: {SHAKE_THRESHOLD:.1f})",
                     (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
+        cv2.putText(frame_with_text, f"Glare: {glare_percentage:.2f}% (Th: 10.0%)",
+                    (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
         # Update previous frame
         prev_gray = gray
         
         # Store frames for streaming
         with frame_lock:
-            current_frame_raw = frame.copy()  # Raw frame without text
-            current_frame_processed = frame_with_text.copy()  # Frame with detection text
+            current_frame = frame.copy()  # Raw frame without text
+            processed_frame = frame_with_text.copy()  # Frame with detection text
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:
@@ -199,15 +211,18 @@ def index():
 @app.route('/video_frame')
 def video_frame():
     """Serve a single JPEG frame from the raw feed (without detection text)."""
-    global current_frame_raw, frame_lock
+    global current_frame, frame_lock
     
-    if current_frame_raw is None:
+    if current_frame is None or frame_lock is None:
         return "No frame available", 503
     
-    with frame_lock:
-        if current_frame_raw is None:
-            return "No frame available", 503
-        frame = current_frame_raw.copy()
+    try:
+        with frame_lock:
+            if current_frame is None:
+                return "No frame available", 503
+            frame = current_frame.copy()
+    except:
+        return "Error accessing frame", 500
     
     # Encode frame as JPEG
     ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -217,17 +232,20 @@ def video_frame():
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 @app.route('/processed_frame')
-def processed_frame():
+def get_processed_frame():
     """Serve a single JPEG frame from the processed feed (with detection text)."""
-    global current_frame_processed, frame_lock
+    global processed_frame, frame_lock
     
-    if current_frame_processed is None:
+    if processed_frame is None or frame_lock is None:
         return "No frame available", 503
     
-    with frame_lock:
-        if current_frame_processed is None:
-            return "No frame available", 503
-        frame = current_frame_processed.copy()
+    try:
+        with frame_lock:
+            if processed_frame is None:
+                return "No frame available", 503
+            frame = processed_frame.copy()
+    except:
+        return "Error accessing frame", 500
     
     # Encode frame as JPEG
     ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])

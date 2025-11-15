@@ -26,6 +26,29 @@ const glareIndicator = document.getElementById('glareIndicator');
 const livenessIndicator = document.getElementById('livenessIndicator');
 
 // ============================================================================
+// HISTOGRAM VISUALIZATION
+// ============================================================================
+
+/**
+ * Update and display the glare histogram
+ */
+function updateGlareHistogram(histogramData) {
+    // Create a simple text-based histogram visualization
+    let histogramText = '';
+    const maxValue = Math.max(...histogramData);
+    
+    for (let i = 0; i < histogramData.length; i++) {
+        const barLength = Math.round((histogramData[i] / maxValue) * 20);
+        const bar = '█'.repeat(barLength);
+        const intensity = Math.round((i / histogramData.length) * 255);
+        histogramText += `${intensity.toString().padStart(3)}: ${bar}\n`;
+    }
+    
+    // Log to console for debugging
+    console.log('Glare Histogram:\n' + histogramText);
+}
+
+// ============================================================================
 // STATE MANAGEMENT
 // ============================================================================
 
@@ -181,10 +204,17 @@ socket.on('detection_update', (data) => {
 
     if (data.glare) {
         const glareStatus = data.glare.detected ? 'alert' : 'secure';
-        updateMetric('glare', data.glare.detected ? 1 : 0, glareStatus);
+        const glarePercentage = data.glare.percentage || 0;
+        updateMetric('glare', glarePercentage.toFixed(2), glareStatus);
+        
+        // Store histogram data for visualization
+        if (data.glare.histogram) {
+            systemState.metrics.glare.histogram = data.glare.histogram;
+            updateGlareHistogram(data.glare.histogram);
+        }
 
         if (data.glare.detected) {
-            triggerAlert('GLARE', 'Critical Threat: Glare Attack Detected!');
+            triggerAlert('GLARE', `Critical Threat: Glare Detected (${glarePercentage.toFixed(1)}%)!`);
         }
     }
 
