@@ -19,6 +19,7 @@ from werkzeug.utils import secure_filename
 from backend.database import aegis_db, save_glare_image, get_incident_description
 from backend.watermark_validator import validate_video_watermarks, validate_video_watermarks_basic
 from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pocketsphinx_available
+from backend.watermark_embedder import get_watermark_embedder
 
 # Try to import glare rescue functions, but make them optional
 try:
@@ -534,13 +535,20 @@ def camera_thread():
             # Blur fix disabled, use glare-rescued frame as-is
             processed_frame_final = frame_for_processing
         
+        # --- EMBED WATERMARK ON PROCESSED FRAME ---
+        try:
+            watermark_embedder = get_watermark_embedder()
+            processed_frame_final = watermark_embedder.embed(processed_frame_final)
+        except Exception as e:
+            print(f"[WATERMARK] Error embedding watermark: {e}")
+        
         # Update previous frame
         prev_gray = gray
         
         # Store frames for streaming
         with frame_lock:
             current_frame = frame.copy()  # Raw unmodified frame
-            processed_frame = processed_frame_final.copy()  # Frame with glare rescue + blur fix applied
+            processed_frame = processed_frame_final.copy()  # Frame with glare rescue + blur fix + watermark
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:
@@ -893,6 +901,8 @@ def startup():
     print("=" * 60)
     print(f"Blur Threshold: {BLUR_THRESHOLD}")
     print(f"Shake Threshold: {SHAKE_THRESHOLD}")
+    print("✓ Dynamic Watermarking: ENABLED")
+    print("✓ PocketSphinx Speech Recognition: READY")
     print("-" * 60)
     
     if not initialize_camera():
