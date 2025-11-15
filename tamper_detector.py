@@ -90,3 +90,131 @@ def check_glare(frame, threshold_pct=10.0):
     # Return stats
     is_glare = percentage > threshold_pct
     return is_glare, percentage, histogram
+
+def fix_blur_unsharp_mask(frame, kernel_size=5, sigma=1.0, strength=1.5):
+    """
+    Fix blur using Unsharp Masking technique.
+    Enhances edges and makes blurry images appear sharper in real-time.
+    
+    Args:
+        frame (numpy.ndarray): Input BGR frame.
+        kernel_size (int): Gaussian blur kernel size (must be odd, default 5).
+        sigma (float): Standard deviation for Gaussian blur (default 1.0).
+        strength (float): How much sharpening to apply. 
+                         1.0 = no effect, >1.0 = sharpen (default 1.5).
+    
+    Returns:
+        numpy.ndarray: Sharpened BGR frame with same dimensions as input.
+    """
+    # Ensure kernel size is odd
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    
+    # Create blurred version (low-pass filter)
+    blurred = cv2.GaussianBlur(frame, (kernel_size, kernel_size), sigma)
+    
+    # Unsharp mask formula: output = original + (original - blurred) * strength
+    # This amplifies the high-frequency details (edges)
+    sharpened = cv2.addWeighted(frame, 1.0 + strength, blurred, -strength, 0)
+    
+    # Clip values to valid range [0, 255] and convert to uint8
+    sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
+    
+    return sharpened
+
+# Track optical flow history for repositioning detection
+_flow_history = []
+_direction_history = []
+_MAX_HISTORY = 8  # Track last 8 frames for stronger consistency check
+
+def detect_camera_reposition(gray_frame, prev_gray_frame, threshold_shift=8.0):
+    """
+    Detects camera repositioning by analyzing sustained, directional optical flow.
+    Distinguishes between vibrations (random/chaotic motion) and repositioning (consistent directional motion).
+    
+    Args:
+        gray_frame (numpy.ndarray): Current grayscale frame.
+        prev_gray_frame (numpy.ndarray): Previous grayscale frame.
+        threshold_shift (float): Threshold for sustained motion magnitude. Default 8.0.
+                                Shake detection uses 6.0, so reposition requires stronger motion.
+    
+    Returns:
+        tuple: (is_repositioned, shift_magnitude, shift_x, shift_y)
+            - is_repositioned (bool): True if sustained repositioning detected.
+            - shift_magnitude (float): Average shift magnitude.
+            - shift_x (float): Average horizontal motion.
+            - shift_y (float): Average vertical motion.
+    """
+    global _flow_history, _direction_history
+    
+    h, w = gray_frame.shape
+    
+    # Calculate dense optical flow
+    flow = np.zeros((h, w, 2), dtype=np.float32)
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_gray_frame, gray_frame, flow,
+        0.5, 3, 15, 3, 5, 1.2, 0
+    )
+    
+    # Calculate magnitude of motion vectors
+    magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
+    
+    # Analyze center region (ignore borders which have artifacts)
+    h_margin, w_margin = h // 10, w // 10
+    center_magnitude = magnitude[h_margin:h-h_margin, w_margin:w-w_margin]
+    
+    # Get statistics
+    avg_motion = np.mean(center_magnitude) if center_magnitude.size > 0 else 0
+    
+    # Calculate average shift direction and magnitude
+    center_flow = flow[h_margin:h-h_margin, w_margin:w-w_margin]
+    shift_x = float(np.mean(center_flow[..., 0])) if center_flow.size > 0 else 0.0
+    shift_y = float(np.mean(center_flow[..., 1])) if center_flow.size > 0 else 0.0
+    shift_magnitude = np.sqrt(shift_x**2 + shift_y**2)
+    
+    # Track motion history to detect sustained movement vs vibration
+    _flow_history.append(avg_motion)
+    if len(_flow_history) > _MAX_HISTORY:
+        _flow_history.pop(0)
+    
+    # Track directional consistency (unit vectors)
+    if shift_magnitude > 0.1:
+        direction = (shift_x / shift_magnitude, shift_y / shift_magnitude)
+    else:
+        direction = (0, 0)
+    _direction_history.append(direction)
+    if len(_direction_history) > _MAX_HISTORY:
+        _direction_history.pop(0)
+    
+    # Repositioning is detected when:
+    # 1. Average motion is SIGNIFICANTLY higher than shake threshold (8.0 vs 6.0)
+    # 2. Motion is sustained over MOST recent frames (75%+ consistency)
+    # 3. Direction is consistent (not random/chaotic vibration)
+    is_repositioned = False
+    if len(_flow_history) >= 6:  # Need at least 6 frames history
+        # Check if at least 6 of last 8 frames show strong motion
+        motion_count = sum(1 for m in _flow_history if m > threshold_shift)
+        consistency = motion_count / len(_flow_history)
+        
+        # Check directional consistency: if we have strong motion, direction should be coherent
+        direction_consistency = 0
+        if motion_count >= 6:
+            # Calculate average direction of high-motion frames
+            high_motion_directions = [
+                _direction_history[i] for i in range(len(_direction_history))
+                if _flow_history[i] > threshold_shift
+            ]
+            if len(high_motion_directions) >= 4:
+                avg_dir_x = np.mean([d[0] for d in high_motion_directions])
+                avg_dir_y = np.mean([d[1] for d in high_motion_directions])
+                avg_dir_magnitude = np.sqrt(avg_dir_x**2 + avg_dir_y**2)
+                # If average direction has strong magnitude, motion is coherent (not random)
+                direction_consistency = avg_dir_magnitude
+        
+        # Repositioning requires:
+        # - 75%+ of recent frames showing strong motion
+        # - Coherent direction (not random vibration chaos)
+        is_repositioned = (consistency >= 0.75 and motion_count >= 6 and 
+                          direction_consistency > 0.6 and shift_magnitude > threshold_shift)
+    
+    return is_repositioned, shift_magnitude, shift_x, shift_y

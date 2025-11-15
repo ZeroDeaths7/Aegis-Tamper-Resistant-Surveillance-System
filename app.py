@@ -8,6 +8,7 @@ from flask_socketio import SocketIO, emit
 import cv2
 import numpy as np
 import tamper_detector
+from tamper_detector import fix_blur_unsharp_mask
 import os
 import threading
 import time
@@ -24,9 +25,12 @@ app = Flask(__name__,
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configuration
-BLUR_THRESHOLD = 90.0
+BLUR_THRESHOLD = 100.0
 SHAKE_THRESHOLD = 6.0
+REPOSITION_THRESHOLD = 8.0  # Higher than shake threshold (6.0) - requires stronger sustained motion
 CAMERA_INDEX = 0
+BLUR_FIX_ENABLED = True
+BLUR_FIX_STRENGTH = 5
 
 # Global variables
 cap = None
@@ -34,6 +38,8 @@ prev_gray = None
 current_frame = None  # Raw frame without text
 processed_frame = None  # Frame with detection text
 frame_lock = None
+reposition_alert_active = False
+reposition_alert_frames = 0
 
 # ============================================================================
 # CAMERA AND DETECTION FUNCTIONS
@@ -87,7 +93,21 @@ def camera_thread():
         # --- RUN DETECTIONS ---
         is_blurred, blur_variance = tamper_detector.check_blur(gray, threshold=BLUR_THRESHOLD)
         is_shaken, shake_magnitude = tamper_detector.check_shake(gray, prev_gray, threshold=SHAKE_THRESHOLD)
+        is_repositioned, shift_magnitude, shift_x, shift_y = tamper_detector.detect_camera_reposition(
+            gray, prev_gray, threshold_shift=REPOSITION_THRESHOLD
+        )
         is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
+        
+        # Manage repositioning alert state
+        global reposition_alert_active, reposition_alert_frames
+        if is_repositioned:
+            reposition_alert_active = True
+            reposition_alert_frames = 0
+            print(f"🚨 REPOSITION DETECTED - Magnitude: {shift_magnitude:.2f}px, Shift: ({shift_x:.2f}, {shift_y:.2f})")
+        else:
+            reposition_alert_frames += 1
+            if reposition_alert_frames > 30:  # Clear alert after 30 frames without detection
+                reposition_alert_active = False
         
         # Prepare detection data for frontend
         detection_data = {
@@ -98,6 +118,13 @@ def camera_thread():
             'shake': {
                 'detected': bool(is_shaken),
                 'magnitude': float(shake_magnitude)
+            },
+            'reposition': {
+                'detected': bool(is_repositioned),
+                'magnitude': float(shift_magnitude),
+                'shift_x': float(shift_x),
+                'shift_y': float(shift_y),
+                'alert_active': bool(reposition_alert_active)
             },
             'glare': {
                 'detected': bool(is_glare),
@@ -122,16 +149,32 @@ def camera_thread():
         except Exception as e:
             print(f"Error emitting detection data: {e}")
         
-        # Create processed frame (no text overlays - metrics shown in dashboard below)
-        frame_with_text = frame.copy()
+        # Create processed frame with blur fixing
+        if BLUR_FIX_ENABLED:
+            # Always apply unsharp masking, but dynamically adjust strength based on blur variance
+            # Lower variance = more blurry = higher strength
+            # Variance range: typically 0-300+
+            # Map to strength range: 5.0 to 8.5 (higher base for inherently blurry camera)
+            if blur_variance < 50:
+                dynamic_strength = 8.5  # Very blurry - maximum sharpening
+            elif blur_variance < 100:
+                dynamic_strength = 3 + (100 - blur_variance) / 8  # Scale between 5.0-8.5
+            else:
+                dynamic_strength = max(3, 8.5 - (blur_variance - 100) / 40)  # Scale down, but keep at 5.0 minimum
+            
+            # Apply unsharp masking with dynamic strength
+            frame_with_text = fix_blur_unsharp_mask(frame, kernel_size=5, sigma=1.0, strength=dynamic_strength)
+        else:
+            # Blur fix disabled, use original frame
+            frame_with_text = frame.copy()
         
         # Update previous frame
         prev_gray = gray
         
         # Store frames for streaming
         with frame_lock:
-            current_frame = frame.copy()  # Raw frame without text
-            processed_frame = frame_with_text.copy()  # Frame with detection text
+            current_frame = frame.copy()  # Raw unmodified frame
+            processed_frame = frame_with_text.copy()  # Frame with blur fix applied if needed
         
         # Small delay to prevent CPU overload
         if frame_count % 10 == 0:
