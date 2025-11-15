@@ -2,8 +2,8 @@ import cv2
 import tamper_detector # <-- IMPORT YOUR NEW MODULE
 
 # --- Configuration ---
-BLUR_THRESHOLD = 80.0
-SHAKE_THRESHOLD = 1.1 # You will need to tune this!
+BLUR_THRESHOLD = 90.0
+SHAKE_THRESHOLD = 6.0 # You will need to tune this!
 CAMERA_INDEX = 0
 # ---
 
