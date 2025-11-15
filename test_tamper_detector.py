@@ -63,13 +63,18 @@ def run_live_test(camera_index, blur_thresh, shake_thresh):
         blur_status = "BLURRY" if is_blurred else "SHARP"
         shake_status = "SHAKE" if is_shaken else "STABLE"
         
-        color = (0, 0, 255) # Default Red
-        if not is_blurred and not is_shaken:
-            color = (0, 255, 0) # Green
+        # Color codes:
+        # Blur: Green=Sharp, Red=Blurry
+        # Shake: Bright Yellow=Stable, Red=Shake
+        blur_color = (0, 0, 255) if is_blurred else (0, 255, 0)  # Red or Green
+        shake_color = (0, 255, 255) if not is_shaken else (0, 0, 255)  # Bright Yellow or Red
 
-        # Add text to the frame
-        cv2.putText(frame, f"STATUS: {blur_status} | {shake_status}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        # Add text to the frame with separate colors for blur and shake status
+        cv2.putText(frame, f"Blur: {blur_status}",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, blur_color, 2)
+        
+        cv2.putText(frame, f"Shake: {shake_status}",
+                    (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, shake_color, 2)
         
         cv2.putText(frame, f"Blur Variance: {blur_variance:.2f} (Th: {blur_thresh:.0f})",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
