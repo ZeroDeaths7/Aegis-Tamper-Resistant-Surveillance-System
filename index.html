@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS: Active Defense System</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Top Header Bar -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="header-title">AEGIS: ACTIVE DEFENSE SYSTEM</h1>
+        </div>
+        <div class="header-right">
+            <p class="team-name">Team: ZeroDeaths7</p>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-container">
+        <!-- Video Panels Container -->
+        <div class="video-container">
+            <!-- Left Panel: Raw Feed (Vulnerable) -->
+            <div class="video-panel vulnerable">
+                <h2 class="panel-title">RAW FEED (VULNERABLE)</h2>
+                <div class="video-wrapper">
+                    <img id="rawFeed" src="" alt="Raw Video Feed" class="video-stream">
+                    <div class="panel-overlay"></div>
+                </div>
+            </div>
+
+            <!-- Divider -->
+            <div class="panel-divider"></div>
+
+            <!-- Right Panel: CLAHE Processed (Defended) -->
+            <div class="video-panel defended">
+                <h2 class="panel-title">AEGIS PROCESSED (DEFENDED)</h2>
+                <div class="video-wrapper">
+                    <img id="processedFeed" src="" alt="Processed Video Feed" class="video-stream">
+                    <div class="panel-overlay"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status & Alert Console -->
+        <section class="console-section">
+            <!-- Live Status Indicator -->
+            <div class="status-container">
+                <div class="status-badge secure" id="statusBadge">
+                    <span class="status-pulse"></span>
+                    STATUS: SECURE
+                </div>
+            </div>
+
+            <!-- Real-time Alert Banner -->
+            <div class="alert-banner-container">
+                <div class="alert-banner" id="alertBanner">
+                    <p class="alert-message">System Active - All Sensors Online</p>
+                </div>
+            </div>
+
+            <!-- Detection Log -->
+            <div class="detection-log">
+                <h3 class="log-title">Detection Log</h3>
+                <div class="log-content" id="detectionLog">
+                    <div class="log-entry secure">
+                        <span class="log-time">Initializing...</span>
+                        <span class="log-message">System started</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Detection Metrics Panel -->
+        <section class="metrics-section">
+            <div class="metric-item">
+                <div class="metric-label">Blur</div>
+                <div class="metric-value" id="blurValue">-</div>
+                <div class="metric-indicator" id="blurIndicator">●</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">Shake</div>
+                <div class="metric-value" id="shakeValue">-</div>
+                <div class="metric-indicator" id="shakeIndicator">●</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">Glare</div>
+                <div class="metric-value" id="glareValue">-</div>
+                <div class="metric-indicator" id="glareIndicator">●</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">Liveness</div>
+                <div class="metric-value" id="livenessValue">-</div>
+                <div class="metric-indicator" id="livenessIndicator">●</div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Socket.IO Client Library -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
