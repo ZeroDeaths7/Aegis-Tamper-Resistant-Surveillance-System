@@ -25,8 +25,9 @@ app = Flask(__name__,
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Configuration
-BLUR_THRESHOLD = 90.0
+BLUR_THRESHOLD = 100.0
 SHAKE_THRESHOLD = 6.0
+REPOSITION_THRESHOLD = 8.0  # Higher than shake threshold (6.0) - requires stronger sustained motion
 CAMERA_INDEX = 0
 BLUR_FIX_ENABLED = True
 BLUR_FIX_STRENGTH = 5
@@ -37,6 +38,8 @@ prev_gray = None
 current_frame = None  # Raw frame without text
 processed_frame = None  # Frame with detection text
 frame_lock = None
+reposition_alert_active = False
+reposition_alert_frames = 0
 
 # ============================================================================
 # CAMERA AND DETECTION FUNCTIONS
@@ -90,7 +93,21 @@ def camera_thread():
         # --- RUN DETECTIONS ---
         is_blurred, blur_variance = tamper_detector.check_blur(gray, threshold=BLUR_THRESHOLD)
         is_shaken, shake_magnitude = tamper_detector.check_shake(gray, prev_gray, threshold=SHAKE_THRESHOLD)
+        is_repositioned, shift_magnitude, shift_x, shift_y = tamper_detector.detect_camera_reposition(
+            gray, prev_gray, threshold_shift=REPOSITION_THRESHOLD
+        )
         is_glare, glare_percentage, glare_histogram = tamper_detector.check_glare(frame, threshold_pct=10.0)
+        
+        # Manage repositioning alert state
+        global reposition_alert_active, reposition_alert_frames
+        if is_repositioned:
+            reposition_alert_active = True
+            reposition_alert_frames = 0
+            print(f"🚨 REPOSITION DETECTED - Magnitude: {shift_magnitude:.2f}px, Shift: ({shift_x:.2f}, {shift_y:.2f})")
+        else:
+            reposition_alert_frames += 1
+            if reposition_alert_frames > 30:  # Clear alert after 30 frames without detection
+                reposition_alert_active = False
         
         # Prepare detection data for frontend
         detection_data = {
@@ -101,6 +118,13 @@ def camera_thread():
             'shake': {
                 'detected': bool(is_shaken),
                 'magnitude': float(shake_magnitude)
+            },
+            'reposition': {
+                'detected': bool(is_repositioned),
+                'magnitude': float(shift_magnitude),
+                'shift_x': float(shift_x),
+                'shift_y': float(shift_y),
+                'alert_active': bool(reposition_alert_active)
             },
             'glare': {
                 'detected': bool(is_glare),

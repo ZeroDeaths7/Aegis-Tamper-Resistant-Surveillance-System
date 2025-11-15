@@ -88,12 +88,27 @@
                 <div class="metric-indicator" id="glareIndicator">●</div>
             </div>
             <div class="metric-item">
+                <div class="metric-label">Reposition</div>
+                <div class="metric-value" id="repositionValue">-</div>
+                <div class="metric-indicator" id="repositionIndicator">●</div>
+            </div>
+            <div class="metric-item">
                 <div class="metric-label">Liveness</div>
                 <div class="metric-value" id="livenessValue">-</div>
                 <div class="metric-indicator" id="livenessIndicator">●</div>
             </div>
         </section>
     </main>
+
+    <!-- Repositioning Alert Modal -->
+    <div id="repositionAlertModal" class="alert-modal hidden">
+        <div class="alert-modal-content">
+            <div class="alert-modal-icon">🚨</div>
+            <h2 class="alert-modal-title">Camera Repositioning Detected</h2>
+            <p class="alert-modal-message">The surveillance camera has been actively moved. Immediate action may be required.</p>
+            <button class="alert-modal-button" onclick="dismissRepositionAlert()">DISMISS ALERT</button>
+        </div>
+    </div>
 
     <!-- Socket.IO Client Library -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
