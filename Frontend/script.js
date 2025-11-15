@@ -327,6 +327,17 @@ socket.on('status_update', (data) => {
     }
 });
 
+socket.on('sensor_states', (data) => {
+    console.log('Received sensor states:', data);
+    
+    // Update all checkboxes (both settings tab and inline) to match backend state
+    Object.entries(data).forEach(([sensor, enabled]) => {
+        document.querySelectorAll(`[data-sensor="${sensor}"]`).forEach(checkbox => {
+            checkbox.checked = enabled;
+        });
+    });
+});
+
 // ============================================================================
 // KEYBOARD CONTROLS (Optional - for testing)
 // ============================================================================
@@ -398,6 +409,30 @@ document.addEventListener('DOMContentLoaded', () => {
             button.classList.add('active');
         });
     });
+
+    // Setup sensor toggle switches (both in settings tab and inline with metrics)
+    document.querySelectorAll('.sensor-checkbox, .sensor-checkbox-inline, .setting-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const sensor = e.target.dataset.sensor;
+            const enabled = e.target.checked;
+            
+            // Update all toggles to stay in sync
+            document.querySelectorAll(`[data-sensor="${sensor}"]`).forEach(el => {
+                el.checked = enabled;
+            });
+            
+            // Send to backend
+            socket.emit('set_sensor_enabled', {
+                sensor: sensor,
+                enabled: enabled
+            });
+            
+            console.log(`${sensor} toggled to ${enabled}`);
+        });
+    });
+
+    // Request initial sensor states from backend
+    socket.emit('get_sensor_states');
 
     startVideoStream();
 });

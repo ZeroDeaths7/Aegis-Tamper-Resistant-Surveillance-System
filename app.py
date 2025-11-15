@@ -48,6 +48,19 @@ BLUR_FIX_STRENGTH = 5
 GLARE_RESCUE_ENABLED = True  # Disabled for now - enable after testing
 GLARE_RESCUE_MODE = 'MSR'  # Options: 'CLAHE', 'MSR'
 
+# Sensor enable/disable configuration - all enabled by default
+sensor_config = {
+    'blur': True,           # Blur detection
+    'shake': True,          # Shake detection
+    'glare': True,          # Glare detection
+    'liveness': True,       # Liveness detection
+    'reposition': True,     # Reposition detection
+    'blur_fix': True,       # Blur correction
+    'glare_rescue': True,   # Glare rescue
+    'audio_alerts': True    # Audio alerts/logging
+}
+sensor_config_lock = threading.Lock()  # Thread-safe config updates
+
 # Liveness detection configuration
 LIVENESS_THRESHOLD = 2.0        # LOW threshold: detects freezing/static feed
 MAJOR_TAMPER_THRESHOLD = 60.0   # HIGH threshold: detects sudden, massive scene change
@@ -78,6 +91,7 @@ processed_frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
 # Audio logging globals
 LOG_AUDIO_SUBTITLES = False
+audio_logging_lock = threading.Lock()
 detection_data_cache = None
 
 # ============================================================================
@@ -110,10 +124,14 @@ def audio_logging_thread():
     global LOG_AUDIO_SUBTITLES
     
     r = speech_recognition.Recognizer()
-    print("Audio logger thread started.")
+    print("[AUDIO] Audio logger thread started - waiting for tamper detection...")
     
     while True:
-        if LOG_AUDIO_SUBTITLES:
+        # Thread-safe check of audio logging flag
+        with audio_logging_lock:
+            should_log = LOG_AUDIO_SUBTITLES
+        
+        if should_log:
             try:
                 with speech_recognition.Microphone() as source:
                     print("[AUDIO] Listening for speech...")
@@ -237,6 +255,23 @@ def camera_thread():
         # Store frozen state globally
         liveness_is_frozen = is_frozen
         
+        # Read sensor configuration (thread-safe)
+        with sensor_config_lock:
+            sensor_enabled = sensor_config.copy()
+        
+        # Respect sensor configuration - disable detections if sensor is disabled
+        if not sensor_enabled['blur']:
+            is_blurred = False
+        if not sensor_enabled['shake']:
+            is_shaken = False
+        if not sensor_enabled['glare']:
+            is_glare = False
+        if not sensor_enabled['liveness']:
+            is_frozen = is_blackout = is_major_tamper = False
+            liveness_status_text = "INITIALIZING"
+        if not sensor_enabled['reposition']:
+            is_repositioned = False
+        
         # Determine if ANY tamper is detected (for audio logging trigger)
         any_tamper_detected = is_blurred or is_shaken or is_glare or is_frozen or is_blackout or is_major_tamper
         
@@ -295,10 +330,16 @@ def camera_thread():
         # --- AUDIO LOGGING TRIGGER ---
         # Audio logging is triggered when ANY tamper (blur, shake, glare) is detected
         global LOG_AUDIO_SUBTITLES
-        if any_tamper_detected:
-            if not LOG_AUDIO_SUBTITLES:
-                LOG_AUDIO_SUBTITLES = True
-                print(f"[TRIGGER] ✓ Audio logging ENABLED (tampering detected)")
+        should_enable_audio = any_tamper_detected and sensor_enabled['audio_alerts']
+        
+        with audio_logging_lock:
+            current_audio_state = LOG_AUDIO_SUBTITLES
+        
+        if should_enable_audio:
+            if not current_audio_state:
+                with audio_logging_lock:
+                    LOG_AUDIO_SUBTITLES = True
+                print(f"[TRIGGER] ✓ Audio logging ENABLED - Detections: Blur={is_blurred}, Shake={is_shaken}, Glare={is_glare}, Frozen={is_frozen}")
                 try:
                     with app.app_context():
                         socketio.emit('alert', {
@@ -308,9 +349,10 @@ def camera_thread():
                 except Exception as e:
                     print(f"[TRIGGER] ✗ Error emitting alert: {e}")
         else:
-            if LOG_AUDIO_SUBTITLES:
-                LOG_AUDIO_SUBTITLES = False
-                print(f"[TRIGGER] ✓ Audio logging DISABLED (tampering cleared)")
+            if current_audio_state:
+                with audio_logging_lock:
+                    LOG_AUDIO_SUBTITLES = False
+                print(f"[TRIGGER] ✓ Audio logging DISABLED - No tampering detected")
                 try:
                     with app.app_context():
                         socketio.emit('alert_clear', {}, namespace='/', skip_sid=None)
@@ -331,7 +373,7 @@ def camera_thread():
         
         # --- GLARE RESCUE (Applied FIRST, before blur fixing) ---
         frame_for_processing = frame.copy()  # Start with original frame
-        if is_glare and GLARE_RESCUE_ENABLED:
+        if is_glare and GLARE_RESCUE_ENABLED and sensor_enabled['glare_rescue']:
             try:
                 print(f"[GLARE] Applying glare rescue (mode: {GLARE_RESCUE_MODE})...")
                 if GLARE_RESCUE_MODE == 'MSR':
@@ -352,7 +394,7 @@ def camera_thread():
                 frame_for_processing = frame.copy()
         
         # Create processed frame with blur fixing (applied AFTER glare rescue)
-        if BLUR_FIX_ENABLED:
+        if BLUR_FIX_ENABLED and sensor_enabled['blur_fix']:
             # Always apply unsharp masking, but dynamically adjust strength based on blur variance
             # Lower variance = more blurry = higher strength
             # Variance range: typically 0-300+
@@ -529,6 +571,26 @@ def handle_dismiss_reposition_alert():
     global reposition_alert_shown
     reposition_alert_shown = False
     print("Reposition alert dismissed by user")
+
+@socketio.on('get_sensor_states')
+def handle_get_sensor_states():
+    """Send current sensor configuration to client."""
+    with sensor_config_lock:
+        emit('sensor_states', sensor_config)
+
+@socketio.on('set_sensor_enabled')
+def handle_set_sensor_enabled(data):
+    """Handle sensor enable/disable request from frontend."""
+    sensor = data.get('sensor')
+    enabled = data.get('enabled', True)
+    
+    if sensor in sensor_config:
+        with sensor_config_lock:
+            sensor_config[sensor] = enabled
+        print(f"Sensor '{sensor}' set to {enabled}")
+        emit('status_update', {'status': 'healthy', 'message': f'{sensor} toggled to {enabled}'})
+    else:
+        print(f"Warning: Unknown sensor '{sensor}'")
 
 # ============================================================================
 # STARTUP AND SHUTDOWN
