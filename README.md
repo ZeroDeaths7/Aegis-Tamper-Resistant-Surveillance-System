@@ -1,205 +1,400 @@
-# AegisAI — Tamper-Resistant Surveillance System
+# AegisAI – Tamper‑Resistant Surveillance System
 
-AegisAI is an end-to-end surveillance platform that combines on-edge AI analytics with cryptographic tamper-resistance, secure storage, and auditable evidence chains. It is designed for environments that require reliable incident detection plus provable, forensically-sound video and metadata preservation.
+AegisAI is a tamper‑aware surveillance system that **detects and logs physical attacks, environmental interference, and replay attacks in real time** using computer vision, cryptography, and structured incident logging.
 
-> NOTE: This README is intentionally written to be modular and editable. Replace or remove placeholder sections to match the exact implementation details and deployment choices in this repository.
+The system is built as a **single‑camera demo stack** with:
 
----
+- OpenCV‑based video processing
+- Multiple tamper‑detection modules (blur, shake, glare, liveness, reposition, blackout)
+- A **cryptographic watermark pipeline** to prove that video was captured live
+- A **SQLite database** for incident logging and analytics
+- A **web UI (frontend)** connected via Socket.IO for real‑time monitoring
 
-Table of contents
-- Project overview
-- Key features
-- Architecture & components
-- Security and tamper-resistance model
-- Quick start
-  - Prerequisites
-  - Local/edge install (developer)
-  - Server/storage install (production)
-- Configuration
-- Typical workflows
-- Deployment patterns
-- Monitoring & maintenance
-- Contributing
-- License & authors
+This repository is optimized for **explainability and mentorship**: every major module is documented in [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md).
 
 ---
 
-Project overview
-----------------
-AegisAI is built for organizations that need:
-- Real-time incident detection (people, vehicles, loitering, intrusion, etc.) using lightweight on-device models
-- Encrypted, append-only evidence storage with provenance metadata
-- Cryptographic proofs (digital signatures, hash chaining) that recorded footage and metadata were not altered after capture
-- Audit trails and exportable evidence packages for legal/forensic needs
+## Table of Contents
 
-It targets a hybrid architecture where cameras or edge gateways run AI inference and produce signed data blobs that are synchronized to secure long-term storage.
+- [Concept & Threat Model](#concept--threat-model)
+- [Core Features](#core-features)
+- [Repository Structure](#repository-structure)
+- [Key Detection Modules](#key-detection-modules)
+  - [Blur Detection](#blur-detection)
+  - [Shake & Reposition](#shake--reposition)
+  - [Glare Detection & Rescue](#glare-detection--rescue)
+  - [Liveness & Blackout](#liveness--blackout)
+  - [HMAC Watermark Validation](#hmac-watermark-validation)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Running the App](#running-the-app)
+- [Configuration](#configuration)
+- [Incidents, Storage & Logs](#incidents-storage--logs)
+- [Testing](#testing)
+- [Limitations & Future Work](#limitations--future-work)
+- [License](#license)
+- [Contact](#contact)
 
-Key features
-------------
-- On-edge AI inference for low-latency detection (object detection, re-ID, event classification)
-- Event-triggered capture (short clips, snapshots, structured metadata) to avoid storing unnecessary footage
-- Cryptographic tamper-resistance:
-  - Per-event hashing and chaining (append-only chain)
-  - Digital signatures for device-origin authenticity
-  - Optional integration with timestamping / notarization services
-- End-to-end encryption in transit and at rest
-- Secure evidence packaging and export (with verification instructions)
-- Role-based access control (RBAC) for playback and export
-- Tamper-detection alerts if an integrity check fails
-- Extensible plugin architecture for model updates, new detectors, or custom storage backends
-- CI-friendly codebase and hooks for model retraining pipelines (if applicable)
+---
 
-Architecture & components
--------------------------
-High-level components typically included in the project (adjust to your implementation):
-- Edge Agent (camera/gateway)
-  - Lightweight runtime performing capture and inference
-  - Produces events, thumbnails, and short clips on triggers
-  - Signs events with device keys and attaches provenance metadata
-- Ingest Service
-  - Verifies signatures, hashes, and timestamps
-  - Stores encrypted blobs in an append-only store (filesystem, object storage)
-  - Updates ledger entries for evidence chain-of-custody
-- Storage Backend
-  - Encrypted object store (S3-compatible / local object storage)
-  - Short-term cache for fast retrieval
-- Ledger / Index
-  - Append-only metadata ledger for auditing (could be a relational DB with immutability controls or a small blockchain/merkle-log)
-- Verification & Forensics tools
-  - Utilities to verify files, re-compute hashes, and produce a human-readable evidence package
-- UI / Dashboard (optional)
-  - Live view, playback, event search, export & verification UI
-- Alerting & Integrations
-  - Webhooks, email, SIEM integrations, or third-party notification systems
+## Concept & Threat Model
 
-Security & tamper-resistance model
----------------------------------
-AegisAI's tamper-resistance is a combination of cryptographic and operational controls:
+Traditional CCTV systems can be silently defeated by:
 
-- Device identity & key management
-  - Each edge device has a unique key pair (device private key kept on the device)
-  - Device public keys are provisioned to the ingest/verification service
-- Signed events
-  - Every captured artifact (frame, thumbnail, clip, metadata record) is signed by the device
-- Hash chaining / Merkle logs
-  - Events are chained: each event record includes the hash of the previous event (or uses a Merkle tree for batches)
-  - The chain root can be periodically published or timestamped (e.g., external timestamping or blockchain anchoring)
-- Encrypted transport & storage
-  - TLS for transport
-  - Server-side or client-side encryption for object storage
-- Audit trail & verification
-  - All ingestion operations are logged
-  - Verification utilities can show whether any artifact has been modified since creation
+- Covering or defocusing the lens
+- Shaking or repositioning the camera
+- Shining strong light (flashlight, car headlights, sunlight) into the lens
+- Freezing or looping the video feed
+- Playing back **old video** to spoof “live” footage
 
-Quick start
------------
+**AegisAI** treats the camera as an actively defended sensor:
 
-Prerequisites (examples — adjust to repo)
-- Linux/macOS or a compatible edge runtime
-- Docker (optional but recommended for local testing)
-- Python 3.9+ / Node 16+ (if parts of the stack use these)
-- FFmpeg (for clip generation)
-- Access to an S3-compatible object store (minio for local testing)
-- OpenSSL (for key generation)
+- It continuously monitors the **video statistics and motion patterns** to detect:
+  - Blur / obstruction
+  - Vibration vs actual camera re‑aiming
+  - Glare and over/under‑exposure
+  - Frozen or replayed feeds
+  - Full blackout
+- It embeds and validates a **time‑based HMAC watermark** inside the video so that uploaded clips can be verified as **live and recent**, not replays.
 
-Local / developer install (fast path)
-1. Clone repository:
-   git clone https://github.com/ZeroDeaths7/AegisAI-tamper-resistent-surveillance-system.git
-   cd AegisAI-tamper-resistent-surveillance-system
-2. Create a virtual environment and install dependencies (example for Python):
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-3. Start local object store and services with Docker Compose:
-   docker compose up --build
-4. Provision a test device key and start the edge agent simulator:
-   ./scripts/generate_device_key.sh --id test-device
-   ./edge/agent_simulator.py --device-id test-device --server http://localhost:8080
-5. Open the dashboard at http://localhost:3000 (if UI included)
+The goal is not just detection, but **forensic traceability**: every incident is logged with type, timing and auxiliary data in a local database.
 
-Production / edge install (high level)
-1. Provision device keys securely (use TPM/secure element if available).
-2. Harden OS and restrict access to private keys.
-3. Configure edge agent to talk to your ingest endpoint over TLS; trust the server certificate.
-4. Enable server-side verification and persistent storage redundancy (multi-AZ S3, backups).
-5. Set up periodic notarization of ledger roots (external timestamps or anchoring).
+---
 
-Configuration
--------------
-Common configuration options:
-- Device identity and private key path
-- Ingest endpoint URL and TLS settings
-- Storage backend endpoint (S3 bucket, prefix)
-- Retention policy settings for events and raw footage
-- Alerting endpoints (webhook, syslog, SIEM)
-- Model selection and inference parameters (confidence thresholds, classes to detect)
-Store configuration as environment variables or a config file (examples in /config).
+## Core Features
 
-Typical workflows
------------------
-1. Real-time detection:
-   - Edge agent runs model, emits an event when a detection passes threshold.
-   - Event contains metadata (bbox, confidence), a signed thumbnail, and optionally a short encrypted clip.
-2. Ingest & verify:
-   - Ingest service authenticates and verifies device signature, computes and stores hashes, appends ledger entry.
-3. Audit & export:
-   - Authorized user exports an evidence package: includes signed artifacts, ledger proofs, and verification instructions.
-   - Verification tool re-checks signatures and hashes to demonstrate chain-of-custody.
-4. Forensic review:
-   - Investigators use the verification utility to confirm artifact integrity before review.
+- **Blur / Obstruction Detection**  
+  Uses Laplacian variance to detect when the lens is intentionally or accidentally obscured.
 
-Deployment patterns
--------------------
-- Single-site on-prem: ingest and storage on local infrastructure, edge agents on a LAN.
-- Multi-site: centralized ingest with edge gateways in each location; use VPN/secure tunnels as necessary.
-- Cloud-backed: cloud object storage for long-term retention; local cache for recent footage.
-- Air-gapped forensic export: produce sealed evidence packages for transfer to isolated analysis environments.
+- **Shake & Camera Reposition Detection**  
+  Uses dense optical flow (Farneback) + motion history to distinguish:
+  - Brief vibration (shake) vs
+  - Sustained directional camera rotation (reposition).
 
-Monitoring & maintenance
-------------------------
-- Health checks for edge agents and ingest services
-- Regular verification runs to detect silent tampering
-- Key rotation plan and device revocation mechanism
-- Backup and retention auditing for stored evidence
-- Model performance monitoring and periodic retraining (if applicable)
+- **Glare Detection & Rescue**  
+  Detects histogram signatures of glare; optionally applies CLAHE + sharpening to rescue detail from overexposed frames. Example glare frames live in `Glare_Rescue_Pics/`.
 
-Contributing
-------------
-Contributions are welcome. Suggested workflow:
-- Fork the repo and create a feature branch
-- Write tests for new functionality
-- Open a pull request describing the change and why it improves the system
-- Maintain backwards-compatible changes to evidence formats when possible
-- For security-sensitive changes (crypto, key handling), include a design justification and tests
+- **Liveness / Frozen‑Feed & Blackout Detection**  
+  Uses frame‑difference statistics and brightness thresholds to:
+  - Detect frozen or looped feeds
+  - Detect lens cap / total blackout conditions.
 
-Security disclosures
---------------------
-- Do not check private keys into the repository.
-- Report vulnerabilities by opening an issue or contacting the maintainers.
-- Follow responsible disclosure practices.
+- **HMAC Watermark for Replay‑Attack Defense**  
+  - On live streams, the backend embeds a **colored square watermark** derived from an HMAC‑SHA256 of the current timestamp.  
+  - On upload, the system extracts colors from the ROI and validates them against the expected HMAC sequence, with a threshold for “LIVE vs NOT_LIVE”.
 
-Glossary
---------
-- Edge Agent: software running on camera or gateway that captures, signs, and sends events
-- Ingest Service: backend that verifies and stores signed events
-- Ledger: append-only metadata store used to track chain-of-custody
-- Evidence Package: a signed, verifiable bundle of recorded artifacts plus proofs
+- **Incident Database & Analytics**  
+  - SQLite DB (`aegis.db`) storing:
+    - incidents (blur, shake, glare, reposition, freeze, blackout, major_tamper)
+    - audio logs
+    - glare images metadata
+    - liveness validation results  
+  - Incident grouping logic to avoid flooding during sustained attacks.
 
-License & authors
------------------
-- License: [Specify LICENSE file / SPDX identifier here]
-- Authors: ZeroDeaths7 and contributors (replace with project-specific names/contacts)
+- **Real‑Time Web UI**  
+  - Backend emits frames, metrics and alert events over Socket.IO.
+  - Frontend (in `Frontend/`) shows live feed, processed frames, and incident status.
 
-Contact
--------
-For project questions, issues, and contributions, open an issue in this repository or contact the maintainers listed in the AUTHORS file.
+For deep algorithmic details and worked examples, see:  
+👉 [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md)
 
-Customizing this README
------------------------
-- Replace placeholder sections (prereqs, commands, service URLs) with exact commands from the repo.
-- Add badges (build, license, coverage) at the top if CI is configured.
-- If there is an existing architecture diagram file, link or embed it under Architecture.
+---
 
-Acknowledgements
-----------------
-Built with open-source tools and best-practice patterns for secure, auditable evidence capture.
+## Repository Structure
+
+High‑level layout (non‑exhaustive):
+
+```text
+.
+├── app.py                     # Main backend / app entry point (Flask / Socket.IO style)
+├── tamper_detector.py         # Core blur / shake / reposition / liveness logic
+├── liveness.py                # Helper functions for frozen-feed / liveness checks
+├── low_light.py               # Low-light handling utilities
+├── dynamic_watermarker.py     # (If used) dynamic overlay / watermark helpers
+├── Sensor/
+│   └── glare_rescue.py        # Glare detection + CLAHE-based rescue
+├── backend/
+│   ├── database.py            # SQLite models and incident/audio/glare/liveness tables
+│   ├── watermark_embedder.py  # HMAC timestamp → color watermark embedding
+│   ├── watermark_extractor.py # ROI extraction + mean color computation
+│   ├── watermark_validator.py # Frame-by-frame HMAC color validation
+│   └── pocketsphinx_*.py      # Audio recognition integration (if available)
+├── Frontend/                  # Web UI (JS/HTML/CSS)
+├── storage/                   # Output, uploads, generated evidence, etc.
+├── Glare_Rescue_Pics/         # Example images for glare experiments
+├── requirements.txt           # Python dependencies
+├── aegis.db                   # SQLite database (created at runtime)
+├── TECHNICAL_DOCUMENTATION.md # Detailed mentor-level docs
+└── tests (separate files)
+    ├── test_api_response_format.py
+    ├── test_camera.py
+    ├── test_e2e_validation.py
+    ├── test_hmac_token_format.py
+    ├── test_integration.py
+    ├── test_json_serialization.py
+    ├── test_optical_flow.py
+    ├── test_tamper_detector.py
+    ├── test_video_validation_json.py
+    └── test_watermarker.py
+```
+
+---
+
+## Key Detection Modules
+
+This section summarizes what’s implemented; the exact math / thresholds are explained in  
+[TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md).
+
+### Blur Detection
+
+- **File:** `tamper_detector.py` → `check_blur()`
+- **Method:** Laplacian variance on grayscale frames.
+- **Intuition:** Sharp images have high Laplacian variance; blurred / covered images have low variance.
+- **Core idea:** If Laplacian variance < `BLUR_THRESHOLD` (≈ 70.0 by default) for long enough, raise a **BLUR ALERT**.
+
+### Shake & Reposition
+
+- **File:** `tamper_detector.py` → `check_shake()` and `detect_camera_reposition()`
+- **Method:** Dense optical flow (Farneback) across consecutive frames.
+- **Shake:** 
+  - Looks for high average motion magnitude but **oscillatory** (back‑and‑forth) direction.
+- **Reposition:** 
+  - Tracks motion history (up to 10 frames) and checks for:
+    - Sustained high shift magnitude
+    - **Consistent direction** over time
+  - Also fires an **immediate alert** on very large single‑frame shifts (fast jerk).
+
+### Glare Detection & Rescue
+
+- **File:** `Sensor/glare_rescue.py`
+- **Detection:** Histogram‑based “loss of detail” in grayscale:
+  - Too many dark pixels, too many bright pixels, not enough mid‑tones.
+- **Rescue:** CLAHE + sharpening to recover detail; extreme highlights are tamed.
+- **Integration:** Controlled via flags in `app.py` (e.g. `GLARE_RESCUE_ENABLED`).
+
+### Liveness & Blackout
+
+- **File:** `tamper_detector.py` / `liveness.py` (as helper)
+- **Frozen feed:**  
+  - Uses frame‑difference sums between current and reference frame.
+  - Below `LIVENESS_THRESHOLD` over a window → feed appears frozen.
+- **Dynamic reference:**  
+  - Reference frames are periodically updated to avoid false positives in static scenes.
+- **Blackout:**  
+  - Uses mean brightness < `BLACKOUT_BRIGHTNESS_THRESHOLD` as a signal for full blackout (lens cap / darkness).
+
+### HMAC Watermark Validation
+
+- **Files:**
+  - Embedding: `backend/watermark_embedder.py`
+  - Extraction: `backend/watermark_extractor.py`
+  - Validation: `backend/watermark_validator.py`
+- **Idea:**
+  - During capture, each frame encodes a **timestamp‑based HMAC** as a small RGB square in the bottom‑right corner.
+  - On uploaded videos, AegisAI:
+    1. Extracts average RGB from the watermark ROI per frame.
+    2. Recomputes expected HMAC colors for the corresponding timestamps.
+    3. Compares via Euclidean distance in RGB space.
+    4. Computes what percentage of frames match; if ≥ `LIVE_THRESHOLD` (≈ 70%), video is treated as **LIVE**.
+- **Security:**  
+  Without the secret key, attackers cannot forge correct colors for arbitrary timestamps, so replay attacks are detected.
+
+All of this is described in depth with step‑by‑step examples in  
+[TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md).
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python **3.9+**
+- A working C toolchain for OpenCV / scientific libs (on Linux: `build-essential`, `cmake`; on Windows: Visual Studio Build Tools)
+- FFmpeg (for full video encode/decode workflows)
+- (Optional) PocketSphinx if you want audio recognition enabled
+- A modern browser for the web UI
+
+On Ubuntu/Debian‑like systems:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv python3-dev ffmpeg \
+    build-essential libopencv-dev
+```
+
+### Installation
+
+Clone the repository and install Python dependencies:
+
+```bash
+git clone https://github.com/ZeroDeaths7/AegisAI-tamper-resistent-surveillance-system.git
+cd AegisAI-tamper-resistent-surveillance-system
+
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+> Note: The exact dependency list lives in `requirements.txt`. If you change modules, keep that file in sync.
+
+### Running the App
+
+1. **Initialize the database (optional first run)**  
+   On first run, `backend/database.py` is responsible for creating the `aegis.db` schema.  
+   If a helper script exists (e.g. `python backend/database.py --init`), run it; otherwise just start `app.py` and it will auto‑create tables.
+
+2. **Start the backend server**
+
+   ```bash
+   python app.py
+   ```
+
+   This will:
+   - Open the camera (or video source) handled by `app.py`
+   - Run tamper detection modules in real time
+   - Start a web server and Socket.IO endpoint for the frontend
+
+3. **Open the frontend**
+
+   - If `Frontend` is a static folder served by `app.py`, browse to the URL printed in the terminal (commonly `http://localhost:5000` or `http://localhost:8000`).
+   - If there is a separate frontend dev server (e.g. React/Vite), follow the instructions in `Frontend/README` (if present) and point it at the backend Socket.IO URL.
+
+4. **Trigger some events**
+
+   - **Blur/obstruction:** briefly cover the camera with your hand.
+   - **Shake:** gently tap the camera mount.
+   - **Reposition:** slowly rotate or quickly jerk the camera.
+   - **Glare:** shine a flashlight into the lens or display high‑contrast images.
+   - **Frozen feed simulation:** feed a pre‑encoded video or pause updates in a test harness.
+
+   Observed behavior:
+   - Real‑time metrics and alert banners in the UI.
+   - New incident rows created in `aegis.db`.
+
+---
+
+## Configuration
+
+Most runtime behavior is controlled via:
+
+- **Environment variables**, **config flags**, or small constants in:
+  - `tamper_detector.py`
+  - `Sensor/glare_rescue.py`
+  - `liveness.py`
+  - `backend/watermark_*.py`
+  - `backend/database.py`
+
+Typical configuration knobs:
+
+- **Blur module**
+  - `BLUR_THRESHOLD` – Laplacian variance threshold
+
+- **Shake & reposition**
+  - `SHAKE_THRESHOLD`
+  - `REPOSITION_THRESHOLD`
+  - `FAST_REPOSITION_THRESHOLD`
+  - `_MAX_HISTORY`
+  - `DIRECTION_CONSISTENCY`
+
+- **Glare**
+  - Histogram percentage thresholds: `threshold_dark_pct`, `threshold_bright_pct`, `threshold_mid_pct`
+  - CLAHE parameters: `clipLimit`, `tileGridSize`
+
+- **Liveness**
+  - `LIVENESS_THRESHOLD`
+  - `LIVENESS_CHECK_INTERVAL`
+  - `LIVENESS_ACTIVATION_TIME`
+  - `BLACKOUT_BRIGHTNESS_THRESHOLD`
+
+- **Watermark validation**
+  - `LIVE_THRESHOLD` (percentage of frames that must match)
+  - Secret key for HMAC (in `watermark_embedder.py` / `watermark_validator.py`)
+
+If you deploy this anywhere non‑demo‑like, **move secrets to environment variables or a secure config**, and rotate keys.
+
+---
+
+## Incidents, Storage & Logs
+
+- **Database:** `aegis.db` (SQLite)
+- **Main tables** (see [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) for schema):
+
+  - `incidents` – blur, shake, glare, reposition, freeze, blackout, major_tamper
+  - `audio_logs` – recognized text tied to incidents
+  - `glare_images` – file paths and stats for stored glare frames
+  - `liveness_validations` – per‑upload validation results (live/not_live, JSON frame stats)
+
+- **Retention behavior:**
+  - In‑memory tracking only keeps a small rolling window (e.g. last 5 incidents) to avoid overload.
+  - Full history is persisted in the DB for offline analysis.
+
+> If you want to inspect the DB directly, open `aegis.db` with any SQLite browser (e.g. `sqlite3` CLI, DB Browser for SQLite).
+
+---
+
+## Testing
+
+This repo includes multiple focused tests to validate:
+
+- API responses / JSON format – `test_api_response_format.py`
+- Camera and capture behavior – `test_camera.py`
+- End‑to‑end validation – `test_e2e_validation.py`
+- HMAC token / watermark format – `test_hmac_token_format.py`, `test_watermarker.py`
+- Optical flow & reposition detection – `test_optical_flow.py`, `test_tamper_detector.py`
+- Video validation JSON structure – `test_video_validation_json.py`
+- Serialization helpers – `test_json_serialization.py`
+- Integration glue – `test_integration.py`
+
+To run the full test suite:
+
+```bash
+pytest
+```
+
+(Ensure your virtualenv is activated and `pytest` is installed via `requirements.txt`.)
+
+Some tests may require sample videos / images and can be sensitive to environment differences (e.g. OpenCV version).
+
+---
+
+## Limitations & Future Work
+
+This is a **prototype / research‑grade** system, not a product:
+
+- Single‑camera focus; multi‑camera orchestration is not implemented.
+- No production‑grade auth/RBAC for the web UI.
+- Watermark key management is simplified for demonstration.
+- No distributed ledger or external timestamp anchoring (though the design is compatible).
+
+Potential next steps:
+
+- Multi‑camera support and centralized controller
+- Hardened key management plus HSM / TPM integration
+- Exportable “evidence packages” with verification CLI
+- CI pipeline for automatic tests on every commit
+- More advanced AI models for semantic event detection
+
+---
+
+## License
+
+This project is released under the **MIT License**.  
+See [LICENSE](LICENSE) for full terms.
+
+---
+
+## Contact
+
+- Authors: **Prateek,Mevin,Rajeev,Abhiram**  
+- Repository: [AegisAI‑tamper‑resistent‑surveillance‑system](https://github.com/ZeroDeaths7/AegisAI-tamper-resistent-surveillance-system)
+
+For questions, issues, or contributions:
+
+- Open a GitHub issue on this repository, or
+- Fork and submit a pull request with a clear description and tests where appropriate.
+
+For a deep dive into the math and design decisions, start with:  
+👉 [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md)
