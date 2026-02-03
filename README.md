@@ -1,4 +1,4 @@
-# AegisAI – Tamper-Resistant Surveillance System
+# Aegis – Tamper-Resistant Surveillance System
 
 AegisAI is a professional-grade surveillance platform combining real-time AI tamper detection with cryptographic evidence preservation. It identifies physical attacks (blurring, shaking, repositioning) and digital replay attacks using computer vision and robust watermarking.
 
