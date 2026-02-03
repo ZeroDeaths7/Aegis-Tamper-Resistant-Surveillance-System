@@ -22,10 +22,9 @@ The real-time dashboard provides visualization of camera feeds, tamper metrics, 
 - **Forensic Logging**: SQL-backed incident tracking and liveness verification.
 
 ### Glare Rescue Performance
-| Glare Detection | Recovery Process | Restored Output |
+| Glare Recovery 1 | Glare Recovery 2 | Glare Recovery 3 |
 |:---:|:---:|:---:|
-| ![Glare 1](assets/debug/glare_rescue/glare_detection.png) | ![Glare 2](assets/debug/glare_rescue/glare_recovery.png) | ![Glare 3](assets/debug/glare_rescue/glare_output.png) |
-
+| ![Glare Detection](https://github.com/user-attachments/assets/9d827772-dec1-4091-b6e7-204c0b49b8b5) | ![Recovery Process](https://github.com/user-attachments/assets/ad7a8f4b-ff9f-4455-8346-6fa55e4e8595) | ![Restored Output](https://github.com/user-attachments/assets/3284e225-613f-4894-b88c-80338ae5b1f1) |
 ---
 
 ## Technical Architecture
