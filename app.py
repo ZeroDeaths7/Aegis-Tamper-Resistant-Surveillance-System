@@ -7,8 +7,8 @@ from flask import Flask, render_template, Response, send_from_directory, send_fi
 from flask_socketio import SocketIO, emit
 import cv2
 import numpy as np
-import tamper_detector
-from tamper_detector import fix_blur_unsharp_mask
+from backend import tamper_detector
+from backend.tamper_detector import fix_blur_unsharp_mask
 import os
 import threading
 import time
@@ -24,7 +24,7 @@ from backend.pocketsphinx_recognizer import get_pocketsphinx_recognizer, is_pock
 # Try to import glare rescue functions, but make them optional
 try:
     # <--- FIX 1: Only import functions that exist in your new file ---
-    from Sensor.glare_rescue import (
+    from backend.glare_rescue import (
         apply_unsharp_mask, 
         get_image_viability_stats
     )

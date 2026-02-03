@@ -11,7 +11,7 @@ from pathlib import Path
 import os
 
 # Database configuration
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'aegis.db')
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'aegis.db')
 STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'storage')
 GLARE_IMAGES_DIR = os.path.join(STORAGE_DIR, 'glare_images')
 LIVENESS_VIDEOS_DIR = os.path.join(STORAGE_DIR, 'liveness_videos')

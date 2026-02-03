@@ -30,3 +30,11 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# AegisAI Dynamic Data & Storage
+data/*.db
+data/*.csv
+storage/**
+assets/debug/**
+!storage/
+!assets/debug/
